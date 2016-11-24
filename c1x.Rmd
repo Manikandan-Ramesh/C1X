@@ -1,0 +1,284 @@
+---
+title: "C1X Data Challenge"
+author: "Manikandan .R"
+date: "November 23, 2016"
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Data
+
+500k User section collection- consists of ~20M web queries collected from ~650k users over three months.
+
+
+```{r}
+setwd("C:\\intro_to_datascience\\competitions\\c1x")
+df<- read.csv("user-ct-test-collection-02.txt", header= TRUE, sep='\t')
+str(df)
+```
+
+
+## Data Pre processing
+
+We split the data into 2 sets-
+
+
+        1. One set containing all queries that was NOT followed by the user clicking on a result item.**df1**
+        2. Other set containing click through on an item in the result list returned from a query.**df2**
+
+```{r}
+df1<- subset(df,ItemRank!= 'NA')
+df[df=='NA']<- NA
+df2<- subset(df,is.na(df$ItemRank))
+str(df1)
+str(df2)
+```
+
+Removing duplicate entries
+```{r}
+df1<- unique(df1)
+df2<- unique(df2)
+nrow(df1)
+nrow(df2)
+```
+
+## Exploring ItemRank variable
+```{r}
+ranktab<-round(prop.table(table(df1$ItemRank))*100)
+ranktabdf<- as.data.frame(ranktab)
+str(ranktabdf)
+ranktabdf1<- ranktabdf[2:16,]
+library(ggplot2)
+ggplot(ranktabdf1,aes(x= Var1,y= Freq))+geom_bar(stat = "identity")
+
+```
+
+> It is infered that 89% of clicked users were able to get their searches within 10 ranked items
+
+
+## Exploring Queries searched by user
+```{r}
+library(data.table)
+library(plyr)
+library(dplyr)
+dtbl<- tbl_df(df)
+dtbl3<- dtbl %>% group_by(AnonID) %>% summarise(n=n_distinct(Query))
+head(dtbl3,10)
+val<- dtbl3[,2]
+querytab<- round(prop.table(table(val))*100)
+querytab<- as.data.frame(querytab)
+querytab1<- querytab[1:50,]
+querytbl<- tbl_df(querytab1)
+mutate(querytbl,cumulative=cumsum(querytbl$Freq))
+ggplot(querytab1,aes(x=val,y=Freq))+geom_bar(stat = "identity")
+```
+
+> Nearly 50% of the users queried the search engine with 1-10 query topics
+
+
+## Exploring at Overall search engine level
+
+We separate the users into 2 segments- 
+
+users who got relevant search- those who had atleast clicked on one query search result.
+users who didn't get relevant search- those who hasn't clicked on any query search result.
+
+Reshping the data to get click details at user level
+Deriving metrics at an overall search engine level-  Overall Click Rate and Overall Non-Click Rate.
+```{r}
+library("magrittr")
+dbtl4<- dtbl %>% select(AnonID,ItemRank)
+dbtl4$rank<-dbtl4$ItemRank
+dbtl4[dbtl4=='NA']<- NA
+
+dbtl4$rank<- apply(dbtl4[,c("ItemRank")],1, function(i) ifelse((is.na(i)),'NA','CL'))
+head(dbtl4)        
+
+dbtl6<- dbtl4 %>% group_by(AnonID,rank) %>% summarise(n=n())
+head(dbtl6)
+
+library(tidyr)
+dbtl7<- spread(dbtl6,rank,n)
+head(dbtl7)
+nrow(dbtl7)
+dbtl9<- dbtl7[which(!is.na(dbtl7$CL)),]
+nrow(dbtl9)
+dbtl8<- dbtl7[which(is.na(dbtl7$CL)),]
+nrow(dbtl8)
+OverallCR<- nrow(dbtl9)/nrow(dbtl7)*100
+OverallNCR<- nrow(dbtl8)/nrow(dbtl7)*100
+OverallCR
+OverallNCR
+```
+
+## Exploring the users of relevant search
+
+```{r}
+a<- data.frame(name=c("ID","Click","NoClick"))
+colnames(dbtl9)<- a$name
+dbtl10<- dbtl9 %>% mutate(Total = Click+NoClick) %>% mutate(clrate= round((Click/Total)*100)) %>% mutate(nonclrate= round((NoClick/Total)*100))
+
+hist(dbtl10$clrate)
+hist(dbtl10$nonclrate)
+hist(dbtl10$clrate,breaks = 2,labels = TRUE)
+mean(dbtl10$clrate,na.rm = TRUE)
+mean(dbtl10$nonclrate,na.rm = TRUE)
+```
+
+
+>  58% of the users have their click rate <= 50.
+
+## Exploring the users who had not got relevant search
+
+Here, we consider all those users who haven't clicked on any search results.
+
+```{r}
+dbtl8<- as.data.frame(dbtl8)
+a<- data.frame(name=c("ID","Click","NoClick"))
+colnames(dbtl8)<- a$name 
+head(dbtl8)
+
+tabdf<- table(dbtl8$NoClick)
+tabdf<- as.data.frame(tabdf)
+tabdf$Var1<- as.numeric(tabdf$Var1)
+tabdf1<- tabdf[which(tabdf$Var1<=50),]
+ggplot(tabdf1,aes(x=tabdf1$Var1,y=Freq))+geom_bar(stat = "identity")
+```
+
+> 30% of users stop their search with one query(less business action could be taken on this segment).  57% of users do not click any search results for their query topics ranging from 2 to 10.(this segment calls for business attention)
+
+## top urls showing up in the results
+
+```{r}
+dtb1<- tbl_df(df1)
+dtb2<- count(dtb1,ClickURL)
+head(dtb2)
+dtb2<- arrange(dtb2,desc(n))
+head(dtb2,10)
+```
+
+## Time spent by users in search engine.
+
+The objective is to capture the time spent per day calculated to be one session.  if the user had spent only on one query, time spent would be zero. if a user had spend 5 query topics in a day, then the time spent is calculated between the time of first query and last query of the day.
+
+```{r}
+df4<- df
+dbtt3<- tbl_df(df4)
+str(dbtt3)
+dbtt3$Date<- as.Date(dbtt3$QueryTime)
+dbtt3$Time<- format(as.POSIXct(dbtt3$QueryTime),format = "%H:%M:%S")
+
+dbtt3 %>% group_by(AnonID,Date) %>% summarise(min(Time),max(Time))->dbtt4
+head(dbtt4)
+str(dbtt4)
+library("chron")
+
+dbtt4$MINTime<- chron(times=dbtt4$`min(Time)`)
+dbtt4$MAXTime<- chron(times=dbtt4$`max(Time)`)        
+dbtt4$timespent<- dbtt4$MAXTime-dbtt4$MINTime
+head(dbtt4)
+dim(dbtt4)
+
+
+dbtt4$minutesspent<- 60*24* as.numeric(times(dbtt4$timespent))
+head(dbtt4)
+dbtt4$minutesspent<- round(dbtt4$minutesspent,0)
+hist(dbtt4$minutesspent)
+```
+The distribution appears to be right skewed.
+
+## Insights to the Product manager of Search
+
+
+*The Search display page should show 14 results per page.  This covers 93% click probability of relevant users and hence, higher click rates*
+*Eventhough overall click rate figures are better, click rate per user needs attention*
+
+
+## query words that not leads to a click
+
+##Code not executed due to memory limit exceeded error(Error: could not allocate memory (0 Mb) in C function 'R_AllocStringBuffer')
+
+rec<-df2$Query
+head(rec)
+
+library(tm)
+library("wordcloud")
+library("qdap")
+rec_source<- VectorSource(rec)
+rec_corpus<- VCorpus(rec_source)
+rec_corpus[[1]][1]
+
+
+clean_corpus<- function(corpus){
+        corpus<- tm_map(corpus, content_transformer(replace_abbreviation))
+        corpus<- tm_map(corpus, removePunctuation)
+        corpus<- tm_map(corpus, removeNumbers)
+        corpus<- tm_map(corpus, removeWords, c(stopwords("en"),"hpe"))
+        corpus<- tm_map(corpus, content_transformer(tolower))
+        return(corpus)
+}
+
+clean_rec<- clean_corpus(rec_corpus)
+clean_rec[[1]][1]
+
+rec_tdm<- TermDocumentMatrix(clean_rec)
+rec_tdm
+
+rec_m<- as.matrix(rec_tdm)
+term_freqs<- rowSums(rec_m)
+term_freqs
+
+term_freqs<- sort(term_freqs,decreasing = TRUE)
+
+wordfreq<- data.frame(term= names(term_freqs), num= term_freqs)
+wordcloud(wordfreq$term,wordfreq$num, max.words = 100)
+
+
+
+## query words that leads to a click
+
+
+##Code not executed due to memory limit exceeded error(Error: could not allocate memory (0 Mb) in C function 'R_AllocStringBuffer')
+rec1<-df1$query
+head(rec1)
+
+library(tm)
+library("wordcloud")
+library("qdap")
+rec_source1<- VectorSource(rec1)
+rec_corpus1<- VCorpus(rec_source1)
+rec_corpus1[[1]][1]
+
+
+clean_corpus1<- function(corpus){
+        corpus<- tm_map(corpus, content_transformer(replace_abbreviation))
+        corpus<- tm_map(corpus, removePunctuation)
+        corpus<- tm_map(corpus, removeNumbers)
+        corpus<- tm_map(corpus, removeWords, c(stopwords("en"),"hpe"))
+        corpus<- tm_map(corpus, content_transformer(tolower))
+        return(corpus)
+}
+
+clean_rec1<- clean_corpus1(rec_corpus1)
+clean_rec1[[1]][1]
+
+rec_tdm1<- TermDocumentMatrix(clean_rec1)
+rec_tdm1
+
+rec_m1<- as.matrix(rec_tdm1)
+term_freqs1<- rowSums(rec_m1)
+term_freqs1
+
+term_freqs1<- sort(term_freqs1,decreasing = TRUE)
+
+wordfreq1<- data.frame(term= names(term_freqs1), num= term_freqs1)
+wordcloud(wordfreq1$term,wordfreq1$num, max.words = 100)
+```
+
